@@ -1,6 +1,7 @@
 from datamodel import OrderDepth, UserId, TradingState, Order
 import numpy as np
 import pandas as pd
+import jsonpickle
 
 
 class Trader:
@@ -18,6 +19,7 @@ class Trader:
     spreads = {
         asset: [] for asset in assets
     }
+    z_score_starfruit = []
     # Parameters
     limit_position = {
         'AMETHYSTS': [-20, 20],
@@ -36,10 +38,9 @@ class Trader:
         'STARFRUIT': 150
     }
     spreads_storage = {
-        'AMETHYSTS': 0,
+        'AMETHYSTS': 61,
         'STARFRUIT': 0
     }
-
     fair_price_params = {
         'AMETHYSTS': (10000, 100, 'mean', None),
         'STARFRUIT': (None, 5, 'ewm', 20)
@@ -91,7 +92,7 @@ class Trader:
             self.spreads[product].pop(0)
 
     def compute_zscore(self, product, window, mode='avg_price'):
-        z_score = 0
+        z_score = 0.5
         if mode == 'avg_price':
             last_prices = self.avg_prices[product]
         elif mode == 'fair_price':
@@ -105,9 +106,40 @@ class Trader:
             last_prices = last_prices[-window:]
             z_score = (last_prices[-1] - np.min(last_prices)) / (np.max(last_prices) - np.min(last_prices))
 
+        if product == 'STARFRUIT':
+            self.z_score_starfruit.append(z_score)
+            if len(self.z_score_starfruit) > 100:
+                self.z_score_starfruit.pop(0)
+            z_score = np.mean(self.z_score_starfruit)
+
         return z_score
 
+    def shift_market_making(self, current_position, position_threshold, shift):
+        shift_mm = 0
+        if current_position > position_threshold:
+            shift_mm = -shift
+        elif current_position < -position_threshold:
+            shift_mm = shift
+        return shift_mm
+
+    def shift_market_taking(self, current_position, position_threshold, shift):
+        shift_buy, shift_sell = 0, 0
+        if current_position > position_threshold:
+            shift_buy = -shift
+        elif current_position < -position_threshold:
+            shift_sell = shift
+        return shift_buy, shift_sell
+
     def run(self, state: TradingState):
+        # Check Class Variables
+        if len(self.mid_prices[self.assets[0]]) == 0 and state.traderData != '':
+            trader_data = jsonpickle.decode(state.traderData)
+            self.mid_prices = trader_data['mid_prices']
+            self.fair_prices = trader_data['fair_prices']
+            self.avg_prices = trader_data['avg_prices']
+            self.spreads = trader_data['spreads']
+            self.z_score_starfruit = trader_data['z_score_starfruit']
+        # Process
         result = {}
         for product in state.order_depths:
             order_depth = state.order_depths[product]
@@ -138,15 +170,9 @@ class Trader:
             shift_mm, shift_buy, shift_sell = 0, 0, 0
 
             if product == 'AMETHYSTS':
-                if current_position > 0:
-                    shift_buy = -1
-                elif current_position < 0:
-                    shift_sell = 1
-
-                if current_position > 15:
-                    shift_mm = -1
-                elif current_position < -15:
-                    shift_mm = 1
+                # Shift Fair Price
+                shift_buy, shift_sell = self.shift_market_taking(current_position, 0, 1)
+                shift_mm = self.shift_market_making(current_position, 15, 1)
 
             elif product == 'STARFRUIT':
                 self.update_avg_prices(product, window=5)
@@ -154,16 +180,9 @@ class Trader:
                 z_score = 2 * (z_score - 0.5)
                 delta_buy = -z_score if z_score < -0.5 else 0
                 delta_sell = z_score if z_score > 0.5 else 0
-
-                if current_position > 10:
-                    shift_buy = -0.25
-                elif current_position < -10:
-                    shift_sell = 0.25
-
-                if current_position > 15:
-                    shift_mm = -0.5
-                elif current_position < -15:
-                    shift_mm = 0.5
+                # Shift Fair Price
+                shift_buy, shift_sell = self.shift_market_taking(current_position, 10, 0.25)
+                shift_mm = self.shift_market_making(current_position, 15, 0.5)
 
             # Market Taking Orders
             pos_buy, pos_sell = 0, 0
@@ -186,7 +205,13 @@ class Trader:
 
             result[product] = orders
 
-        trader_data = ""
+        trader_data = jsonpickle.encode({
+            'mid_prices': self.mid_prices,
+            'fair_prices': self.fair_prices,
+            'avg_prices': self.avg_prices,
+            'spreads': self.spreads,
+            'z_score_starfruit': self.z_score_starfruit
+        })
         conversions = 1
 
         return result, conversions, trader_data
