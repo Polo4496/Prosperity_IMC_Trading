@@ -1,6 +1,32 @@
-from datamodel import OrderDepth, UserId, TradingState, Order
+from datamodel import OrderDepth, UserId, TradingState, Order, Symbol
 import numpy as np
 import pandas as pd
+
+from statistics import NormalDist
+def f(x, mean, sigma):
+    dist = NormalDist(0,1)
+    return dist.cdf((x-mean+1)/sigma) - dist.cdf((x-mean)/sigma)
+
+def compute_orders_sell(symbol:Symbol,min_bid:int, volume:int, sigma=0.05)->list[Order]:
+    remaining_volume = volume
+    orders = []
+    for i in range(0, 1000):
+        bid = min_bid + i 
+        amount = int(np.ceil(volume*2*f(bid, min_bid,sigma)))
+        if amount==0 and remaining_volume>0:
+            if remaining_volume>1:
+                print((sigma,min_bid,volume, remaining_volume),"BIIIGG")
+            amount=remaining_volume
+        amount = np.minimum(amount,remaining_volume)
+        remaining_volume-=amount
+        orders.append(Order(symbol,int(bid),int(-amount)))
+        if remaining_volume<0:
+            print((sigma,min_bid,volume),"NEGATIVE")
+        if remaining_volume==0:
+            break
+    if remaining_volume>0:
+        print((sigma,min_bid,volume),"Remaining")
+    return orders
 
 
 class Trader:
@@ -114,43 +140,7 @@ class Trader:
         order_depth = state.order_depths["ORCHIDS"]
         orders = []
 
-        # Get Bid & Ask
-        best_ask, best_bid = 0, 0
-        best_ask_amount, best_bid_amount = 0, 0
-        if len(order_depth.sell_orders) != 0:
-            best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
-        if len(order_depth.buy_orders) != 0:
-            best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
-
-        # Update Parameters
-        mid_price = (best_ask + best_bid) / 2 if best_ask != 0 and best_bid != 0 else None
-        # self.update_mid_prices("ORCHIDS", mid_price)
-
-        spread = best_ask - best_bid if best_ask != 0 and best_bid != 0 else None
-        # self.update_spreads("ORCHIDS", spread)
-
-        # Get Product Parameters
         current_position = state.position["ORCHIDS"] if "ORCHIDS" in state.position.keys() else 0
-        # min_position = self.limit_position["ORCHIDS"][0]
-        # max_position = self.limit_position["ORCHIDS"][1]
-        # fair_price = self.get_fair_price("ORCHIDS")
-        # delta_buy, delta_sell = 0.5, 0.5
-
-
-        # Market Taking Orders
-        # pos_buy, pos_sell = 0, 0
-        # if best_ask != 0 and best_ask <= fair_price - delta_buy:
-        #     pos_buy += int(np.minimum(-best_ask_amount, max_position - current_position))
-        #     if pos_buy != 0:
-        #         orders.append(Order("ORCHIDS", best_ask, pos_buy))
-        # if best_bid != 0 and best_bid >= fair_price + delta_sell:
-        #     pos_sell += int(np.maximum(-best_bid_amount, min_position - current_position))
-        #     if pos_sell != 0:
-        #         orders.append(Order("ORCHIDS", best_bid, pos_sell))
-        
-        
-        # if best_ask state.observation[]
-            # orders.append(Order("ORCHIDS",best_bid, -1))
 
         conversions = 0 
         
@@ -165,26 +155,15 @@ class Trader:
                 print("TIMESTAMP: ",state.timestamp)
                 orders.append(Order("ORCHIDS",bid,-bid_amount))
                 volume+=bid_amount
+
+        min_bid = int(np.ceil(state.observations.conversionObservations["ORCHIDS"].askPrice + state.observations.conversionObservations["ORCHIDS"].importTariff + state.observations.conversionObservations["ORCHIDS"].transportFees + 1.2))
         
-        if "ORCHIDS" in state.own_trades and sum([trade.quantity for trade in state.own_trades["ORCHIDS"]])>=90:
-            self.delta_spread_params["ORCHIDS"]+=0.1
-        else:
-            self.delta_spread_params["ORCHIDS"]-=0.1
-        
-        self.delta_spread_params["ORCHIDS"] = max(self.delta_spread_params["ORCHIDS"], 1)
-        
-        bid = state.observations.conversionObservations["ORCHIDS"].askPrice + state.observations.conversionObservations["ORCHIDS"].importTariff + state.observations.conversionObservations["ORCHIDS"].transportFees + self.delta_spread_params["ORCHIDS"]
-        orders.append(Order("ORCHIDS", int(np.ceil(bid)), -100+volume))
-            
+        for order in compute_orders_sell("ORCHIDS",min_bid, 100-volume,sigma=0.7):
+            # print(order.price,order.quantity, order)
+            orders.append(order)
         
         if current_position <0:
             conversions= -current_position  
-            
-        
-        # if state.timestamp==0: 
-            # orders.append(Order("ORCHIDS",best_bid,-1))
-        
-        
 
         result["ORCHIDS"] = orders
 
