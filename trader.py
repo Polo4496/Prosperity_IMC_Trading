@@ -141,6 +141,7 @@ class Trader:
             self.z_score_starfruit = trader_data['z_score_starfruit']
         # Process
         result = {}
+        conversions = 0
         for product in state.order_depths:
             order_depth = state.order_depths[product]
             orders = []
@@ -152,6 +153,14 @@ class Trader:
                 best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
             if len(order_depth.buy_orders) != 0:
                 best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
+
+            if product == 'ORCHIDS':
+                if state.timestamp == 0:
+                    orders.append(Order(product, best_bid, -1))
+                elif state.timestamp == 1000:
+                    conversions = 1
+                result[product] = orders
+                continue
 
             # Update Parameters
             mid_price = (best_ask + best_bid) / 2 if best_ask != 0 and best_bid != 0 else None
@@ -173,7 +182,7 @@ class Trader:
                 # Shift Fair Price
                 shift_buy, shift_sell = self.shift_market_taking(current_position, 0, 1)
                 shift_mm = self.shift_market_making(current_position, 15, 1)
-
+                continue
             elif product == 'STARFRUIT':
                 self.update_avg_prices(product, window=5)
                 z_score = self.compute_zscore(product, window=150)
@@ -183,6 +192,7 @@ class Trader:
                 # Shift Fair Price
                 shift_buy, shift_sell = self.shift_market_taking(current_position, 10, 0.25)
                 shift_mm = self.shift_market_making(current_position, 15, 0.5)
+                continue
 
             # Market Taking Orders
             pos_buy, pos_sell = 0, 0
@@ -212,6 +222,5 @@ class Trader:
             'spreads': self.spreads,
             'z_score_starfruit': self.z_score_starfruit
         })
-        conversions = 1
 
         return result, conversions, trader_data

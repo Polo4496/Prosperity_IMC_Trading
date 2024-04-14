@@ -1,31 +1,27 @@
 from datamodel import OrderDepth, UserId, TradingState, Order, Symbol
 import numpy as np
 import pandas as pd
-
 from statistics import NormalDist
-def f(x, mean, sigma):
-    dist = NormalDist(0,1)
-    return dist.cdf((x-mean+1)/sigma) - dist.cdf((x-mean)/sigma)
 
-def compute_orders_sell(symbol:Symbol,min_bid:int, volume:int, sigma=0.05)->list[Order]:
+
+def f(x, mean, sigma):
+    dist = NormalDist(mean, sigma)
+    return dist.cdf(x+1) - dist.cdf(x)
+
+
+def compute_orders_sell(symbol: Symbol, min_ask: int, volume: int, sigma=0.05) -> list[Order]:
     remaining_volume = volume
     orders = []
     for i in range(0, 1000):
-        bid = min_bid + i 
-        amount = int(np.ceil(volume*2*f(bid, min_bid,sigma)))
-        if amount==0 and remaining_volume>0:
-            if remaining_volume>1:
-                print((sigma,min_bid,volume, remaining_volume),"BIIIGG")
-            amount=remaining_volume
-        amount = np.minimum(amount,remaining_volume)
-        remaining_volume-=amount
-        orders.append(Order(symbol,int(bid),int(-amount)))
-        if remaining_volume<0:
-            print((sigma,min_bid,volume),"NEGATIVE")
-        if remaining_volume==0:
+        ask = min_ask + i
+        amount = int(np.ceil(volume * 2 * f(ask, min_ask, sigma)))
+        if amount == 0 and remaining_volume > 0:
+            amount = remaining_volume
+        amount = np.minimum(amount, remaining_volume)
+        remaining_volume -= amount
+        orders.append(Order(symbol, int(ask), int(-amount)))
+        if remaining_volume == 0:
             break
-    if remaining_volume>0:
-        print((sigma,min_bid,volume),"Remaining")
     return orders
 
 
@@ -75,7 +71,6 @@ class Trader:
         'STARFRUIT': 2.5,
         "ORCHIDS": 1
     }
-    
 
     def get_fair_price(self, product):
         fair_price = None
@@ -141,32 +136,23 @@ class Trader:
         orders = []
 
         current_position = state.position["ORCHIDS"] if "ORCHIDS" in state.position.keys() else 0
-
-        conversions = 0 
-        
-        print(state.own_trades)
-
+        conversions = 0
         volume = 0
-        
+
         for i in range(len(list(order_depth.buy_orders.items()))):
             bid, bid_amount = list(order_depth.buy_orders.items())[i]
-            
             if (bid - state.observations.conversionObservations["ORCHIDS"].askPrice) - state.observations.conversionObservations["ORCHIDS"].importTariff - state.observations.conversionObservations["ORCHIDS"].transportFees > 0:
-                print("TIMESTAMP: ",state.timestamp)
-                orders.append(Order("ORCHIDS",bid,-bid_amount))
-                volume+=bid_amount
- 
-        min_bid = int(np.ceil(state.observations.conversionObservations["ORCHIDS"].askPrice + state.observations.conversionObservations["ORCHIDS"].importTariff + state.observations.conversionObservations["ORCHIDS"].transportFees + 1.2))
-        
-        for order in compute_orders_sell("ORCHIDS",min_bid, 100-volume,sigma=0.7):
-            # print(order.price,order.quantity, order)
+                orders.append(Order("ORCHIDS", bid, -bid_amount))
+                volume += bid_amount
+
+        min_ask = int(np.ceil(state.observations.conversionObservations["ORCHIDS"].askPrice + state.observations.conversionObservations["ORCHIDS"].importTariff + state.observations.conversionObservations["ORCHIDS"].transportFees + self.delta_spread_params['ORCHIDS']))
+        for order in compute_orders_sell("ORCHIDS", min_ask, 100-volume, sigma=0.7):
             orders.append(order)
         
-        if current_position <0:
-            conversions= -current_position  
+        if current_position < 0:
+            conversions = -current_position
 
         result["ORCHIDS"] = orders
-
         trader_data = ""
 
         return result, conversions, trader_data
