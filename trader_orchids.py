@@ -155,7 +155,7 @@ class Trader:
                 print("TIMESTAMP: ",state.timestamp)
                 orders.append(Order("ORCHIDS",bid,-bid_amount))
                 volume+=bid_amount
-
+ 
         min_bid = int(np.ceil(state.observations.conversionObservations["ORCHIDS"].askPrice + state.observations.conversionObservations["ORCHIDS"].importTariff + state.observations.conversionObservations["ORCHIDS"].transportFees + 1.2))
         
         for order in compute_orders_sell("ORCHIDS",min_bid, 100-volume,sigma=0.7):
