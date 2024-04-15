@@ -6,7 +6,7 @@ import jsonpickle
 
 class Trader:
     # Memory
-    assets = ['AMETHYSTS', 'STARFRUIT']
+    assets = ['AMETHYSTS', 'STARFRUIT', 'ORCHIDS']
     mid_prices = {
         asset: [] for asset in assets
     }
@@ -23,31 +23,38 @@ class Trader:
     # Parameters
     limit_position = {
         'AMETHYSTS': [-20, 20],
-        'STARFRUIT': [-20, 20]
+        'STARFRUIT': [-20, 20],
+        'ORCHIDS': [-100, 100]
     }
     mid_prices_storage = {
         'AMETHYSTS': 100,
-        'STARFRUIT': 5
+        'STARFRUIT': 5,
+        'ORCHIDS': 0
     }
     fair_prices_storage = {
         'AMETHYSTS': 0,
-        'STARFRUIT': 0
+        'STARFRUIT': 0,
+        'ORCHIDS': 0
     }
     avg_prices_storage = {
         'AMETHYSTS': 0,
-        'STARFRUIT': 150
+        'STARFRUIT': 150,
+        'ORCHIDS': 0
     }
     spreads_storage = {
-        'AMETHYSTS': 61,
-        'STARFRUIT': 0
+        'AMETHYSTS': 0,
+        'STARFRUIT': 0,
+        'ORCHIDS': 0
     }
     fair_price_params = {
         'AMETHYSTS': (10000, 100, 'mean', None),
-        'STARFRUIT': (None, 5, 'ewm', 20)
+        'STARFRUIT': (None, 5, 'ewm', 20),
+        'ORCHIDS': (None, 0, 'mean', None)
     }
     delta_spread_params = {
         'AMETHYSTS': 4,
-        'STARFRUIT': 2.5
+        'STARFRUIT': 2.5,
+        'ORCHIDS': 1.2
     }
 
     def get_fair_price(self, product):
@@ -154,14 +161,6 @@ class Trader:
             if len(order_depth.buy_orders) != 0:
                 best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
 
-            if product == 'ORCHIDS':
-                if state.timestamp == 0:
-                    orders.append(Order(product, best_bid, -1))
-                elif state.timestamp == 1000:
-                    conversions = 1
-                result[product] = orders
-                continue
-
             # Update Parameters
             mid_price = (best_ask + best_bid) / 2 if best_ask != 0 and best_bid != 0 else None
             self.update_mid_prices(product, mid_price)
@@ -182,7 +181,6 @@ class Trader:
                 # Shift Fair Price
                 shift_buy, shift_sell = self.shift_market_taking(current_position, 0, 1)
                 shift_mm = self.shift_market_making(current_position, 15, 1)
-                continue
             elif product == 'STARFRUIT':
                 self.update_avg_prices(product, window=5)
                 z_score = self.compute_zscore(product, window=150)
@@ -192,26 +190,54 @@ class Trader:
                 # Shift Fair Price
                 shift_buy, shift_sell = self.shift_market_taking(current_position, 10, 0.25)
                 shift_mm = self.shift_market_making(current_position, 15, 0.5)
-                continue
+            elif product == 'ORCHIDS':
+                ask_price = state.observations.conversionObservations[product].askPrice
+                bid_price = state.observations.conversionObservations[product].bidPrice
+                import_tariff = state.observations.conversionObservations[product].importTariff
+                export_tariff = state.observations.conversionObservations[product].exportTariff
+                transport_fees = state.observations.conversionObservations[product].transportFees
+
+                tot_volume_ask = 0
+                for i in range(len(list(order_depth.buy_orders.items()))):
+                    bid, bid_amount = list(order_depth.buy_orders.items())[i]
+                    if (bid - ask_price) - import_tariff - transport_fees > delta_spread:
+                        orders.append(Order(product, bid, -bid_amount))
+                        tot_volume_ask += bid_amount
+
+                tot_volume_bid = 0
+                for i in range(len(list(order_depth.sell_orders.items()))):
+                    ask, ask_amount = list(order_depth.sell_orders.items())[i]
+                    if (bid_price - ask) - export_tariff - transport_fees - 0.1 > delta_spread:
+                        orders.append(Order(product, ask, -ask_amount))
+                        tot_volume_bid += ask_amount
+
+                min_ask = int(np.ceil(ask_price + import_tariff + transport_fees + delta_spread))
+                orders.append(Order("ORCHIDS", min_ask, min_position + tot_volume_ask))
+                min_bid = int(np.floor(bid_price - export_tariff - transport_fees - 0.1 - delta_spread))
+                orders.append(Order("ORCHIDS", min_bid, max_position + tot_volume_bid))
+
+                if current_position < 0:
+                    conversions = -current_position
 
             # Market Taking Orders
-            pos_buy, pos_sell = 0, 0
-            if best_ask != 0 and best_ask <= fair_price - delta_buy + shift_buy:
-                pos_buy += int(np.minimum(-best_ask_amount, max_position - current_position))
-                if pos_buy != 0:
-                    orders.append(Order(product, best_ask, pos_buy))
-            if best_bid != 0 and best_bid >= fair_price + delta_sell + shift_sell:
-                pos_sell += int(np.maximum(-best_bid_amount, min_position - current_position))
-                if pos_sell != 0:
-                    orders.append(Order(product, best_bid, pos_sell))
+            if product != 'ORCHIDS':
+                pos_buy, pos_sell = 0, 0
+                if best_ask != 0 and best_ask <= fair_price - delta_buy + shift_buy:
+                    pos_buy += int(np.minimum(-best_ask_amount, max_position - current_position))
+                    if pos_buy != 0:
+                        orders.append(Order(product, best_ask, pos_buy))
+                if best_bid != 0 and best_bid >= fair_price + delta_sell + shift_sell:
+                    pos_sell += int(np.maximum(-best_bid_amount, min_position - current_position))
+                    if pos_sell != 0:
+                        orders.append(Order(product, best_bid, pos_sell))
 
-            # Market Making Orders
-            if max_position - pos_buy - current_position > 0:
-                pos_buy = max_position - pos_buy - current_position
-                orders.append(Order(product, round(fair_price - delta_spread + shift_mm), pos_buy))
-            if min_position - pos_sell - current_position < 0:
-                pos_sell = min_position - pos_sell - current_position
-                orders.append(Order(product, round(fair_price + delta_spread + shift_mm), pos_sell))
+                # Market Making Orders
+                if max_position - pos_buy - current_position > 0:
+                    pos_buy = max_position - pos_buy - current_position
+                    orders.append(Order(product, round(fair_price - delta_spread + shift_mm), pos_buy))
+                if min_position - pos_sell - current_position < 0:
+                    pos_sell = min_position - pos_sell - current_position
+                    orders.append(Order(product, round(fair_price + delta_spread + shift_mm), pos_sell))
 
             result[product] = orders
 
