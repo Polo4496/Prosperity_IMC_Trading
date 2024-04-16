@@ -153,6 +153,9 @@ class Trader:
             order_depth = state.order_depths[product]
             orders = []
 
+            if product not in self.assets:
+                continue
+
             # Get Bid & Ask
             best_ask, best_bid = 0, 0
             best_ask_amount, best_bid_amount = 0, 0
@@ -197,6 +200,12 @@ class Trader:
                 export_tariff = state.observations.conversionObservations[product].exportTariff
                 transport_fees = state.observations.conversionObservations[product].transportFees
 
+                if 'ORCHIDS' in state.own_trades and np.sum([trade.quantity for trade in state.own_trades[product]]) < 80:
+                    self.delta_spread_params[product] -= 0.01
+                else:
+                    self.delta_spread_params[product] = 1.2
+                delta_spread = self.delta_spread_params[product]
+
                 tot_volume_ask = 0
                 for i in range(len(list(order_depth.buy_orders.items()))):
                     bid, bid_amount = list(order_depth.buy_orders.items())[i]
@@ -216,7 +225,7 @@ class Trader:
                 min_bid = int(np.floor(bid_price - export_tariff - transport_fees - 0.1 - delta_spread))
                 orders.append(Order("ORCHIDS", min_bid, max_position + tot_volume_bid))
 
-                if current_position < 0:
+                if current_position != 0:
                     conversions = -current_position
 
             # Market Taking Orders
