@@ -54,7 +54,7 @@ class Trader:
     delta_spread_params = {
         'AMETHYSTS': 4,
         'STARFRUIT': 2.5,
-        'ORCHIDS': 1.2
+        'ORCHIDS': 0
     }
 
     def get_fair_price(self, product):
@@ -200,36 +200,34 @@ class Trader:
                 export_tariff = state.observations.conversionObservations[product].exportTariff
                 transport_fees = state.observations.conversionObservations[product].transportFees
 
-                if 'ORCHIDS' in state.own_trades and np.sum([trade.quantity for trade in state.own_trades[product]]) < 80:
-                    self.delta_spread_params[product] -= 0.01
+                if 'ORCHIDS' in state.own_trades and np.sum([trade.quantity for trade in state.own_trades[product]]) < 70:
+                    self.delta_spread_params[product] = np.maximum(self.delta_spread_params[product]-0.01, -0.25)
                 else:
-                    self.delta_spread_params[product] = 1.2
-                delta_spread = self.delta_spread_params[product]
+                    self.delta_spread_params[product] = 0
 
                 tot_volume_ask = 0
-                for i in range(len(list(order_depth.buy_orders.items()))):
-                    bid, bid_amount = list(order_depth.buy_orders.items())[i]
-                    if (bid - ask_price) - import_tariff - transport_fees > delta_spread:
-                        orders.append(Order(product, bid, -bid_amount))
-                        tot_volume_ask += bid_amount
+                if (best_bid - ask_price) - import_tariff - transport_fees > 0:
+                    orders.append(Order(product, best_bid, -best_bid_amount))
+                    tot_volume_ask = -best_bid_amount
 
                 tot_volume_bid = 0
-                for i in range(len(list(order_depth.sell_orders.items()))):
-                    ask, ask_amount = list(order_depth.sell_orders.items())[i]
-                    if (bid_price - ask) - export_tariff - transport_fees - 0.1 > delta_spread:
-                        orders.append(Order(product, ask, -ask_amount))
-                        tot_volume_bid += ask_amount
+                if (bid_price - best_ask) - export_tariff - transport_fees - 0.1 > 0:
+                    orders.append(Order(product, best_ask, best_ask_amount))
+                    tot_volume_bid = best_ask_amount
 
-                min_ask = int(np.ceil(ask_price + import_tariff + transport_fees + delta_spread))
-                orders.append(Order("ORCHIDS", min_ask, min_position + tot_volume_ask))
-                min_bid = int(np.floor(bid_price - export_tariff - transport_fees - 0.1 - delta_spread))
-                orders.append(Order("ORCHIDS", min_bid, max_position + tot_volume_bid))
+                min_ask = np.ceil(ask_price + import_tariff + transport_fees + delta_spread)
+                min_ask = int(np.maximum(min_ask, np.ceil(bid_price) - 1))
+                orders.append(Order("ORCHIDS", min_ask, min_position - tot_volume_ask))
+                min_bid = np.floor(bid_price - export_tariff - transport_fees - 0.1 - delta_spread)
+                min_bid = int(np.minimum(min_bid, np.floor(ask_price) + 1))
+                orders.append(Order("ORCHIDS", min_bid, max_position - tot_volume_bid))
 
                 if current_position != 0:
                     conversions = -current_position
 
-            # Market Taking Orders
-            if product != 'ORCHIDS':
+            # Market Orders
+            if product == 'AMETHYSTS' or product == 'STARFRUIT':
+                # Market Taking Orders
                 pos_buy, pos_sell = 0, 0
                 if best_ask != 0 and best_ask <= fair_price - delta_buy + shift_buy:
                     pos_buy += int(np.minimum(-best_ask_amount, max_position - current_position))
