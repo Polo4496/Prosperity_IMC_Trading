@@ -1,12 +1,33 @@
 from datamodel import OrderDepth, UserId, TradingState, Order
 import numpy as np
 import pandas as pd
+import statistics
 import jsonpickle
+norm = statistics.NormalDist()
+import time 
+
+
+def f(sigma, S, K, r, T, C):
+    d1 = (np.log(S / K) + (r + (sigma ** 2) / 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    return S * norm.cdf(d1) - K * np.exp(-r * np.sqrt(T)) * norm.cdf(d2) - C
+
+
+def f_prime(sigma, S, K, r, T, C):
+    d1 = (np.log(S / K) + (r + (sigma ** 2) / 2) * T) / (sigma * np.sqrt(T))
+    return S * norm.pdf(d1) * np.sqrt(T)
+
+
+def newton_method_standard(x0, num_iterations, **kwargs):
+    x = x0
+    for i in range(num_iterations):
+        x = x - f(x, **kwargs) / f_prime(x, **kwargs)
+    return x
 
 
 class Trader:
     # Memory
-    assets = ['AMETHYSTS', 'STARFRUIT', 'ORCHIDS']
+    assets = ['AMETHYSTS', 'STARFRUIT', 'ORCHIDS', 'COCONUT', 'COCONUT_COUPON']
     mid_prices = {
         asset: [] for asset in assets
     }
@@ -21,20 +42,23 @@ class Trader:
     }
     z_score_starfruit = []
     diff_basket = []
+    diff_volatility = []
+    sigma_smooth = []
     # Parameters
     limit_position = {
         'AMETHYSTS': [-20, 20],
         'STARFRUIT': [-20, 20],
         'ORCHIDS': [-100, 100],
-        'CHOCOLATE': [-250, 250],
-        'STRAWBERRIES': [-350, 350],
-        'ROSES': [-60, 60],
-        'GIFT_BASKET': [-60, 60]
+        'GIFT_BASKET': [-60, 60],
+        'COCONUT': [-300, 300],
+        'COCONUT_COUPON': [-600, 600]
     }
     mid_prices_storage = {
         'AMETHYSTS': 100,
         'STARFRUIT': 5,
-        'ORCHIDS': 0
+        'ORCHIDS': 0,
+        'COCONUT': 1000,
+        'COCONUT_COUPON': 1
     }
     fair_prices_storage = {
         'AMETHYSTS': 0,
@@ -49,17 +73,23 @@ class Trader:
     spreads_storage = {
         'AMETHYSTS': 0,
         'STARFRUIT': 0,
-        'ORCHIDS': 0
+        'ORCHIDS': 0,
+        'COCONUT': 0,
+        'COCONUT_COUPON': 0
     }
     fair_price_params = {
         'AMETHYSTS': (10000, 100, 'mean', None),
         'STARFRUIT': (None, 5, 'ewm', 20),
-        'ORCHIDS': (None, 0, 'mean', None)
+        'ORCHIDS': (None, 0, 'mean', None),
+        'COCONUT': (None, 0, 'mean', None),
+        'COCONUT_COUPON': (None, 0, 'mean', None)
     }
     delta_spread_params = {
         'AMETHYSTS': 4,
         'STARFRUIT': 2.5,
-        'ORCHIDS': 0
+        'ORCHIDS': 0,
+        'COCONUT': 0,
+        'COCONUT_COUPON': 0
     }
 
     def get_fair_price(self, product):
@@ -152,6 +182,9 @@ class Trader:
             self.spreads = trader_data['spreads']
             self.z_score_starfruit = trader_data['z_score_starfruit']
             self.diff_basket = trader_data['diff_basket']
+            self.diff_volatility = trader_data['diff_volatility']
+            self.sigma_smooth = trader_data['sigma_smooth']
+
         # Process
         result = {}
         conversions = 0
@@ -161,7 +194,6 @@ class Trader:
 
             if product not in self.assets:
                 continue
-            continue
 
             # Get Bid & Ask
             best_ask, best_bid = 0, 0
@@ -226,6 +258,8 @@ class Trader:
 
                 if current_position != 0:
                     conversions = -current_position
+            elif product == 'COCONUT' or product == 'COCONUT_COUPON':
+                continue
 
             # Market Orders
             if product == 'AMETHYSTS' or product == 'STARFRUIT':
@@ -251,83 +285,150 @@ class Trader:
             result[product] = orders
 
         # Basket Process
-        mid_prices_single = {}
-        bid_volumes_single = {}
-        ask_volumes_single = {}
-        best_bids_single = {}
-        best_asks_single = {}
-        for product in ["CHOCOLATE", "STRAWBERRIES", "ROSES", "GIFT_BASKET"]:
-            order_depth = state.order_depths[product]
-            best_ask, best_bid = 0, 0
-            best_ask_amount, best_bid_amount = 0, 0
-            if len(order_depth.sell_orders) != 0:
-                best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
-            if len(order_depth.buy_orders) != 0:
-                best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
+        '''if 'GIFT_BASKET' in state.order_depths:
+            mid_prices_single = {}
+            bid_volumes_single = {}
+            ask_volumes_single = {}
+            best_bids_single = {}
+            best_asks_single = {}
+            for product in ["CHOCOLATE", "STRAWBERRIES", "ROSES", "GIFT_BASKET"]:
+                order_depth = state.order_depths[product]
+                best_ask, best_bid = 0, 0
+                best_ask_amount, best_bid_amount = 0, 0
+                if len(order_depth.sell_orders) != 0:
+                    best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
+                if len(order_depth.buy_orders) != 0:
+                    best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
 
-            mid_price = (best_ask + best_bid) / 2 if best_ask != 0 and best_bid != 0 else None
-            mid_prices_single[product] = mid_price
-            bid_volumes_single[product] = best_bid_amount
-            ask_volumes_single[product] = best_ask_amount
-            best_bids_single[product] = best_bid
-            best_asks_single[product] = best_ask
-            
-        mid_price_etf = 4 * mid_prices_single['CHOCOLATE'] + 6 * mid_prices_single['STRAWBERRIES'] + mid_prices_single['ROSES']
-        mid_price_basket = mid_prices_single["GIFT_BASKET"]
-        best_bid_basket = best_bids_single["GIFT_BASKET"]
-        best_ask_basket = best_asks_single["GIFT_BASKET"]
-        bid_volume_basket = bid_volumes_single["GIFT_BASKET"]
-        ask_volume_basket = ask_volumes_single["GIFT_BASKET"]
-        
-        etf_basket_diff = mid_price_etf - mid_price_basket
-        self.diff_basket.append(etf_basket_diff)
-        size = len(self.diff_basket)
-        std = 39.53
-        mu = -379.49
-        if size > 60:
-            if size > 400:
-                self.diff_basket.pop(0)
-            std = np.std(self.diff_basket)
-        signal = (etf_basket_diff - mu) / std
-        
-        product = 'GIFT_BASKET'
-        current_position = state.position[product] if product in list(state.position.keys()) else 0
-        min_position = self.limit_position[product][0]
-        max_position = self.limit_position[product][1]
+                mid_price = (best_ask + best_bid) / 2 if best_ask != 0 and best_bid != 0 else None
+                mid_prices_single[product] = mid_price
+                bid_volumes_single[product] = best_bid_amount
+                ask_volumes_single[product] = best_ask_amount
+                best_bids_single[product] = best_bid
+                best_asks_single[product] = best_ask
 
-        volume = 0
-        alpha_open = 1.5
-        alpha_close = -0.5
-        if signal > alpha_open:
-            # long basket
-            volume = int(np.minimum(-ask_volume_basket, max_position - current_position))
-        elif signal < -alpha_open:
-            # short basket
-            volume = int(np.maximum(-bid_volume_basket, min_position - current_position))
-        elif signal < alpha_close and current_position > 0:
-            # close long position basket
-            volume = int(np.maximum(-bid_volume_basket, -current_position))
-        elif signal > -alpha_close and current_position < 0:
-            # close short position basket
-            volume = int(np.minimum(-ask_volume_basket, -current_position))
+            mid_price_etf = 4 * mid_prices_single['CHOCOLATE'] + 6 * mid_prices_single['STRAWBERRIES'] + mid_prices_single['ROSES']
+            mid_price_basket = mid_prices_single["GIFT_BASKET"]
+            best_bid_basket = best_bids_single["GIFT_BASKET"]
+            best_ask_basket = best_asks_single["GIFT_BASKET"]
+            bid_volume_basket = bid_volumes_single["GIFT_BASKET"]
+            ask_volume_basket = ask_volumes_single["GIFT_BASKET"]
 
-        orders = []
-        if volume > 0:
-            orders.append(Order(product, int(best_ask_basket), volume))
-            print('ASK:', best_ask_basket, 'BID:', best_bid_basket)
-            print('VOLUME ASK:', ask_volume_basket, 'VOLUME BID:', bid_volume_basket)
-            print('VOLUME:', volume)
-        elif volume < 0:
-            orders.append(Order(product, int(best_bid_basket), volume))
-        result[product] = orders
+            etf_basket_diff = mid_price_etf - mid_price_basket
+            self.diff_basket.append(etf_basket_diff)
+            size = len(self.diff_basket)
+            std = 39.53
+            mu = -379.49
+            if size > 60:
+                if size > 400:
+                    self.diff_basket.pop(0)
+                std = np.std(self.diff_basket)
+            signal = (etf_basket_diff - mu) / std
 
+            product = 'GIFT_BASKET'
+            current_position = state.position[product] if product in list(state.position.keys()) else 0
+            min_position = self.limit_position[product][0]
+            max_position = self.limit_position[product][1]
+
+            volume = 0
+            alpha_open = 1.5
+            alpha_close = -0.5
+            if signal > alpha_open:
+                # long basket
+                volume = int(np.minimum(-ask_volume_basket, max_position - current_position))
+            elif signal < -alpha_open:
+                # short basket
+                volume = int(np.maximum(-bid_volume_basket, min_position - current_position))
+            elif signal < alpha_close and current_position > 0:
+                # close long position basket
+                volume = int(np.maximum(-bid_volume_basket, -current_position))
+            elif signal > -alpha_close and current_position < 0:
+                # close short position basket
+                volume = int(np.minimum(-ask_volume_basket, -current_position))
+
+            orders = []
+            if volume > 0:
+                orders.append(Order(product, int(best_ask_basket), volume))
+            elif volume < 0:
+                orders.append(Order(product, int(best_bid_basket), volume))
+            result[product] = orders'''
+
+        # Coconut Process
+        if 'COCONUT' in state.order_depths:
+            mid_price = self.mid_prices['COCONUT']
+            if len(mid_price) > 100:
+                returns = np.diff(np.log(mid_price))
+                u = 1 + np.median(returns[returns > 0])
+                d = 1 + np.median(returns[returns < 0])
+            else:
+                u = 1.0000997810967889
+                d = 0.9999002216138848
+
+            S, K, T, delta_t = mid_price[-1], 10000, 1, 1/10000
+            sigma = np.log(u / d) / (2 * np.sqrt(delta_t)) * np.sqrt(252)
+            r = (1 + (np.log(np.sqrt(u * d)))) ** 252 - 1
+            d1 = (np.log(S / K) + (r + (sigma ** 2) / 2) * T) / (sigma * np.sqrt(T))
+            delta = norm.cdf(d1)
+
+            mid_price_coupon = self.mid_prices['COCONUT_COUPON']
+            sigma_implied = newton_method_standard(sigma, 50, S=S, K=K, r=r, T=T, C=mid_price_coupon[-1])
+
+            diff_sigma = (sigma_implied - sigma < 0) * 2 - 1
+            self.diff_volatility.append(diff_sigma)
+            if len(self.diff_volatility) > 60:
+                self.diff_volatility.pop(0)
+            sigma_smooth = np.round(np.mean(self.diff_volatility))
+            if sigma_smooth == 0:
+                sigma_smooth = self.sigma_smooth
+            else:
+                self.sigma_smooth = sigma_smooth
+
+            target_position_coupon = np.maximum(np.minimum(np.round(600 * (0.5 / delta)) * sigma_smooth, 600), -600)
+            target_position_coconut = -np.round((target_position_coupon * delta) * np.abs(sigma_smooth))
+            current_position_coupon = state.position['COCONUT_COUPON'] if 'COCONUT_COUPON' in list(state.position.keys()) else 0
+            current_position_coconut = state.position['COCONUT'] if 'COCONUT' in list(state.position.keys()) else 0
+
+            volume = int(target_position_coupon - current_position_coupon)
+            if volume != 0:
+                orders = []
+                order_depth = state.order_depths['COCONUT_COUPON']
+                best_ask, best_bid = 0, 0
+                if len(order_depth.sell_orders) != 0:
+                    best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
+                if len(order_depth.buy_orders) != 0:
+                    best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
+
+                if volume > 0:
+                    orders.append(Order('COCONUT_COUPON', int(best_ask), volume))
+                else:
+                    orders.append(Order('COCONUT_COUPON', int(best_bid), volume))
+                result['COCONUT_COUPON'] = orders
+
+            volume = int(target_position_coconut - current_position_coconut)
+            if volume != 0:
+                orders = []
+                order_depth = state.order_depths['COCONUT']
+                best_ask, best_bid = 0, 0
+                if len(order_depth.sell_orders) != 0:
+                    best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
+                if len(order_depth.buy_orders) != 0:
+                    best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
+
+                if volume > 0:
+                    orders.append(Order('COCONUT', int(best_ask), volume))
+                else:
+                    orders.append(Order('COCONUT', int(best_bid), volume))
+                result['COCONUT'] = orders
+                
         trader_data = jsonpickle.encode({
             'mid_prices': self.mid_prices,
             'fair_prices': self.fair_prices,
             'avg_prices': self.avg_prices,
             'spreads': self.spreads,
             'z_score_starfruit': self.z_score_starfruit,
-            'diff_basket': self.diff_basket
+            'diff_basket': self.diff_basket,
+            'diff_volatility': self.diff_volatility,
+            'sigma_smooth': self.sigma_smooth
         })
 
         return result, conversions, trader_data
