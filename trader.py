@@ -285,7 +285,7 @@ class Trader:
             result[product] = orders
 
         # Basket Process
-        '''if 'GIFT_BASKET' in state.order_depths:
+        if 'GIFT_BASKET' in state.order_depths:
             mid_prices_single = {}
             bid_volumes_single = {}
             ask_volumes_single = {}
@@ -351,7 +351,7 @@ class Trader:
                 orders.append(Order(product, int(best_ask_basket), volume))
             elif volume < 0:
                 orders.append(Order(product, int(best_bid_basket), volume))
-            result[product] = orders'''
+            result[product] = orders
 
         # Coconut Process
         if 'COCONUT' in state.order_depths:
